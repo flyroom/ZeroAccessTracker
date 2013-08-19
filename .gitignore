@@ -33,3 +33,14 @@ nosetests.xml
 .mr.developer.cfg
 .project
 .pydevproject
+
+tags
+*.log
+password_rsync
+*.bat
+*.filter
+*.swp
+*.dll
+Data/
+
+

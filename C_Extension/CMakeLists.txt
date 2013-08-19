@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 2.6)
+project(P2PCrawlUtil)
+set(CMAKE_CXX_FLAGS "-g -Wno-deprecated")
+MESSAGE(STATUS "Project:P2PCrawlUtil")
+SET(CMAKE_BUIDLE_TYPE DEBUG)
+add_subdirectory(src)
