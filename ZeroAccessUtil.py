@@ -18,12 +18,18 @@ import time
 import logging
 import random
 import urllib2
+import datetime
+import operator
+
+from IPy import IP
 from ctypes import *
 
 from ftplib import FTP
 from StringIO import StringIO
 
 from urlparse import urlparse
+
+from FileUtil import *
 
 logger = logging.getLogger("root")
 
@@ -251,10 +257,108 @@ class ZeroAccessUtil:
                    node.set_ip(ip)
                    node.set_time(time)
                    node.set_udpport(udp_port)
-                   node.set_rssi_count(rssi_count)
+                   node.set_rssi_count(rssi)
                    node_list.append(node)
             file.close()
             return node_list
+        @staticmethod
+        def read_zeroaccess_data_from_bin_with_state(file_path):
+            file = open(file_path,'rb')
+
+            udp_port = 16471
+            node_list = []
+
+            file_size = os.path.getsize(file_path)
+
+            for i in xrange(file_size/13):
+                   node = ZeroAccessNode()
+                   ip = struct.unpack("I",file.read(4))[0]
+                   time = struct.unpack("I",file.read(4))[0]
+                   state = struct.unpack("B",file.read(1))[0]
+                   rssi = struct.unpack("H",file.read(2))[0]
+                   node.set_ip(ip)
+                   node.set_time(time)
+                   node.set_udpport(udp_port)
+                   node.set_rssi_count(rssi)
+                   node_list.append(node)
+            file.close()
+            return node_list
+
+        @staticmethod
+        def read_all_zeroaccess_data_from_bin_in_dir(root_dir,limit=-1):
+            node_map={}
+            live_node_map={}
+
+            file_path_list = FileUtil.get_file_info_from_path_time_sorted(root_dir)
+            final_file_path_list = []
+
+            current_time = datetime.datetime.now()
+            start_time = current_time - datetime.timedelta(days=15)
+
+            for file_path in file_path_list:
+                if(file_path.find('zeroaccess')==-1):
+                        continue
+                if(file_path.find('dat') == -1):
+                        continue
+
+                file_path = root_dir + '/'+file_path
+                file_mtime = datetime.datetime.fromtimestamp(os.stat(file_path).st_mtime)
+                if(file_mtime < start_time):
+                        continue
+                
+                file_size = os.path.getsize(file_path)
+                if file_size%11 != 0:
+                    continue
+                
+                final_file_path_list.append(file_path)
+                if(limit > 0):
+                    if(len(final_file_path_list)>=limit):
+                        break
+
+            file_total_count = len(final_file_path_list)
+            file_count=0
+
+            for file_path in final_file_path_list:
+                file_count += 1
+                print str(file_count) + ' of '+str(file_total_count)+' file'
+                file = open(file_path,'rb')
+                udp_port = 16471
+                node_list = []
+
+                error_count=0
+                try:
+                    for i in xrange(file_size/11):
+                           node = ZeroAccessNode()
+                           ip = socket.htonl(struct.unpack("I",file.read(4))[0])
+                           time = struct.unpack("I",file.read(4))[0]
+                           state = struct.unpack("B",file.read(1))[0]
+                           rssi = struct.unpack("H",file.read(2))[0]
+                           node.set_ip(ip)
+                           node.set_time(time)
+                           node.set_udpport(udp_port)
+                           node.set_rssi_count(rssi)
+
+                           if(node_map.has_key(ip)):
+                               node_count = node_map.get(ip)+1
+                               node_map[ip] = node_count
+                           else:
+                               node_map[ip]=1
+
+                           if state == 1:
+                               if live_node_map.has_key(ip):
+                                   node_count = live_node_map.get(ip)[0]+1
+                                   rssi_count_total = live_node_map.get(ip)[1]+rssi
+                                   live_node_map[ip] = (node_count,rssi_count_total)
+                               else:
+                                   live_node_map[ip]=(1,rssi)
+
+                except:
+                    error_count+=1
+                finally:
+                    file.close()
+            print str(error_count) + ' file\'s format is not valid'
+            return (node_map,live_node_map)
+        
         @staticmethod
         def save_zeroaccess_data_to_bin(node_map,file_path_prefix,udp_port):
             time_int = time.time()
@@ -280,7 +384,6 @@ class ZeroAccessUtil:
             file.close()
         @staticmethod
         def buildZeroAccessretLMessage(seed_node_list,file_list):
-
             header_message = struct.pack('I4cI',
                     0,
                     'L','t','e','r',
@@ -437,13 +540,60 @@ def test_http():
     print urllib2.urlopen(http_url).read()
 def test_read_ip_geo_file():
     ip_file_path = 'Data\\ip2country.db'
-    ZeroAccessUtil.get_ip_list_from_file_with_country_code(ip_file_path,'HK')
+    ZeroAccessUtil.get_ip_list_from_file_with_country_code(ip_file_path,'TW')
 def test_read_zeroaccess_bootstrap_file():
     ZEROACCESS_UDP_PORT = 16464
     SEPARATOR = '\\'
     file_path = "Data"+SEPARATOR+"zeroaccess_node_"+str(ZEROACCESS_UDP_PORT)+".dat"
     ZeroAccessUtil.read_zeroaccess_data_from_file(file_path)
+def test_read_zeroaccess_output_data_file():
+    file_path = 'C:\\bootNodes_query_zeroaccess__2013-Aug-22_08_25_21_-8.dat'
+    zeroaccess_nodelist = ZeroAccessUtil.read_zeroaccess_data_from_bin_with_state(file_path)    
+    print len(zeroaccess_nodelist)
+def union_read_all_zeroaccess_data_file():
+    limit = 300
+    root_dir = '/home/kad/NetKadCrawler/log'
+    node_map_pair = ZeroAccessUtil.read_all_zeroaccess_data_from_bin_in_dir(root_dir)
+    node_map = node_map_pair[0]
+    live_node_map = node_map_pair[1]
+    sorted_x = sorted(node_map.iteritems(), key=operator.itemgetter(1))
+    sorted_x.reverse()
+    for ip_int,count in sorted_x[:limit]:
+        ip_str = socket.inet_ntoa(struct.pack('I',ip_int))
+
+    #print ''
+    #print 'NonPrivate HotSpot IP: '
+    non_private_count=0
+    for ip_int,count in sorted_x:
+        z_ip = IP(socket.ntohl(ip_int))            
+        if(z_ip.iptype() == 'PRIVATE'):
+            continue
+        ip_str = socket.inet_ntoa(struct.pack('I',ip_int))
+        #print ip_str + " --> "+str(count)
+        non_private_count+=1
+        if(non_private_count>=limit):
+            break
+
+    #print ''
+    #print 'Live NonPrivate HotSpot IP: '
+    sorted_live = sorted(live_node_map.iteritems(), key=lambda x:x[1][0])
+    sorted_live.reverse()
+
+    current_date = datetime.datetime.now().strftime('%Y_%m_%d-%H_%M_%S')
+    ip_list_file_out_path = 'active_ip_list_'+current_date+'.csv'
+    hotspot_ip_file = open(ip_list_file_out_path,'w')
+    hotspot_ip_file.write('index,ip,count,rssi_count\n')
+    index = 0
+    for ip_int,(count,rssi_count) in sorted_live[:limit]:
+        index += 1
+        ip_str = socket.inet_ntoa(struct.pack('I',ip_int))
+        ip_record = str(index) + '  ,  ' + ip_str + "  ,  "+str(count)+'  ,  '+str(rssi_count/count)+'\n'
+        hotspot_ip_file.write(ip_record)
 def main():
-    test_read_zeroaccess_bootstrap_file()
+    #test_read_zeroaccess_bootstrap_file()
+    #test_read_ip_geo_file()
+    #test_read_zeroaccess_output_data_file()
+
+    union_read_all_zeroaccess_data_file()
 if __name__ == '__main__':
     main()
